@@ -1,0 +1,143 @@
+{
+  "name": "Automated Reporting — ${CLIENT_NAME}",
+  "nodes": [
+    {
+      "id": "schedule-1",
+      "name": "Weekly Report Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 1"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "http-1",
+      "name": "Fetch CRM Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.zohocrm.com/v2/Leads?sort_by=Created_Time&sort_order=desc&per_page=200",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Zoho-oauthtoken ${CLIENT_ID}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "code-1",
+      "name": "Aggregate Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const leads = $input.first().json.data || [];\nconst now = new Date();\nconst weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);\nconst thisWeek = leads.filter(l => new Date(l.Created_Time) >= weekAgo);\nconst qualified = thisWeek.filter(l => l.Lead_Status === \"Qualified\");\nconst converted = thisWeek.filter(l => l.Lead_Status === \"Converted\");\nconst sources = thisWeek.reduce((acc, l) => { acc[l.Lead_Source || \"Unknown\"] = (acc[l.Lead_Source || \"Unknown\"] || 0) + 1; return acc; }, {});\nconst topSource = Object.entries(sources).sort((a,b)=>b[1]-a[1])[0] || [\"N/A\", 0];\nreturn [{ json: {\n  reportDate: now.toISOString().split(\"T\")[0],\n  clientName: \"${CLIENT_NAME}\",\n  clientId: \"${CLIENT_ID}\",\n  budget: \"${BUDGET}\",\n  metrics: {\n    totalLeads: thisWeek.length,\n    qualifiedLeads: qualified.length,\n    convertedLeads: converted.length,\n    qualificationRate: thisWeek.length > 0 ? ((qualified.length / thisWeek.length) * 100).toFixed(1) + \"%\" : \"0%\",\n    conversionRate: thisWeek.length > 0 ? ((converted.length / thisWeek.length) * 100).toFixed(1) + \"%\" : \"0%\",\n    topLeadSource: topSource[0],\n    topSourceCount: topSource[1]\n  },\n  sourceBreakdown: sources\n} }];"
+      }
+    },
+    {
+      "id": "code-2",
+      "name": "Generate Report HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst m = d.metrics;\nconst rows = [\n  [\"Total Leads\", m.totalLeads],\n  [\"Leads Calificados\", m.qualifiedLeads],\n  [\"Leads Convertidos\", m.convertedLeads],\n  [\"Tasa Calificacion\", m.qualificationRate],\n  [\"Tasa Conversion\", m.conversionRate],\n  [\"Fuente Principal\", m.topLeadSource + \" (\" + m.topSourceCount + \")\"]\n].map((r, i) => `<tr style=\"background:${i%2===0?\"#f8fafc\":\"#fff\"}\"><td style=\"padding:10px;border-bottom:1px solid #e2e8f0\">${r[0]}</td><td style=\"padding:10px;border-bottom:1px solid #e2e8f0\">${r[1]}</td></tr>`).join(\"\");\nconst html = `<div style=\"font-family:Arial,sans-serif;max-width:600px;margin:0 auto\"><h1 style=\"color:#0891b2\">Reporte Semanal — ${d.clientName}</h1><p style=\"color:#64748b\">Semana del ${d.reportDate}</p><table style=\"width:100%;border-collapse:collapse;margin:20px 0\"><tr style=\"background:#f1f5f9\"><td style=\"padding:12px;font-weight:bold\">Metrica</td><td style=\"padding:12px;font-weight:bold\">Valor</td></tr>${rows}</table><p style=\"color:#64748b;font-size:12px\">Generado por ai50m.com para ${d.clientName}</p></div>`;\nreturn [{ json: { ...d, reportHtml: html } }];"
+      }
+    },
+    {
+      "id": "email-1",
+      "name": "Send Report Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        300
+      ],
+      "parameters": {
+        "fromEmail": "reports@ai50m.com",
+        "toEmail": "${CLIENT_EMAIL}",
+        "subject": "Reporte Semanal — ${CLIENT_NAME} — {{ $json.reportDate }}",
+        "emailType": "html",
+        "message": "={{ $json.reportHtml }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Weekly Report Schedule": {
+      "main": [
+        [
+          {
+            "node": "Fetch CRM Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch CRM Data": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Data": {
+      "main": [
+        [
+          {
+            "node": "Generate Report HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Report HTML": {
+      "main": [
+        [
+          {
+            "node": "Send Report Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
