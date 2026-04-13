@@ -1,11 +1,11 @@
 {
-  "name": "Automated Reporting — ${CLIENT_NAME}",
+  "name": "Automated Reporting + Analytics — ${CLIENT_NAME}",
   "nodes": [
     {
-      "id": "schedule-1",
-      "name": "Weekly Report Schedule",
+      "id": "sched-rp",
+      "name": "Monday 8am UTC",
       "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1,
+      "typeVersion": 1.2,
       "position": [
         200,
         300
@@ -22,114 +22,237 @@
       }
     },
     {
-      "id": "http-1",
-      "name": "Fetch CRM Data",
+      "id": "leads-rp",
+      "name": "Get New Leads",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
+      "typeVersion": 4.2,
       "position": [
-        440,
-        300
+        400,
+        200
       ],
       "parameters": {
         "method": "GET",
-        "url": "https://api.zohocrm.com/v2/Leads?sort_by=Created_Time&sort_order=desc&per_page=200",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendHeaders": true,
-        "headerParameters": {
+        "url": "https://www.zohoapis.com/crm/v7/Leads?fields=id,Last_Name,Lead_Status,Created_Time,Company&per_page=200",
+        "headers": {
           "parameters": [
             {
               "name": "Authorization",
-              "value": "Zoho-oauthtoken ${CLIENT_ID}"
+              "value": "Zoho-oauthtoken ${ZOHO_OAUTH_TOKEN}"
+            },
+            {
+              "name": "If-Modified-Since",
+              "value": "={{new Date(Date.now()-7*24*60*60*1000).toISOString()}}"
             }
           ]
         }
       }
     },
     {
-      "id": "code-1",
-      "name": "Aggregate Data",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "id": "deals-rp",
+      "name": "Get Closed Deals",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
-        680,
-        300
+        400,
+        400
       ],
       "parameters": {
-        "jsCode": "const leads = $input.first().json.data || [];\nconst now = new Date();\nconst weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);\nconst thisWeek = leads.filter(l => new Date(l.Created_Time) >= weekAgo);\nconst qualified = thisWeek.filter(l => l.Lead_Status === \"Qualified\");\nconst converted = thisWeek.filter(l => l.Lead_Status === \"Converted\");\nconst sources = thisWeek.reduce((acc, l) => { acc[l.Lead_Source || \"Unknown\"] = (acc[l.Lead_Source || \"Unknown\"] || 0) + 1; return acc; }, {});\nconst topSource = Object.entries(sources).sort((a,b)=>b[1]-a[1])[0] || [\"N/A\", 0];\nreturn [{ json: {\n  reportDate: now.toISOString().split(\"T\")[0],\n  clientName: \"${CLIENT_NAME}\",\n  clientId: \"${CLIENT_ID}\",\n  budget: \"${BUDGET}\",\n  metrics: {\n    totalLeads: thisWeek.length,\n    qualifiedLeads: qualified.length,\n    convertedLeads: converted.length,\n    qualificationRate: thisWeek.length > 0 ? ((qualified.length / thisWeek.length) * 100).toFixed(1) + \"%\" : \"0%\",\n    conversionRate: thisWeek.length > 0 ? ((converted.length / thisWeek.length) * 100).toFixed(1) + \"%\" : \"0%\",\n    topLeadSource: topSource[0],\n    topSourceCount: topSource[1]\n  },\n  sourceBreakdown: sources\n} }];"
+        "method": "GET",
+        "url": "https://www.zohoapis.com/crm/v7/Deals?fields=id,Deal_Name,Amount,Stage,Closing_Date&per_page=100",
+        "headers": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Zoho-oauthtoken ${ZOHO_OAUTH_TOKEN}"
+            }
+          ]
+        }
       }
     },
     {
-      "id": "code-2",
-      "name": "Generate Report HTML",
+      "id": "metrics-rp",
+      "name": "Calculate Metrics",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        920,
+        700,
         300
       ],
       "parameters": {
-        "jsCode": "const d = $input.first().json;\nconst m = d.metrics;\nconst rows = [\n  [\"Total Leads\", m.totalLeads],\n  [\"Leads Calificados\", m.qualifiedLeads],\n  [\"Leads Convertidos\", m.convertedLeads],\n  [\"Tasa Calificacion\", m.qualificationRate],\n  [\"Tasa Conversion\", m.conversionRate],\n  [\"Fuente Principal\", m.topLeadSource + \" (\" + m.topSourceCount + \")\"]\n].map((r, i) => `<tr style=\"background:${i%2===0?\"#f8fafc\":\"#fff\"}\"><td style=\"padding:10px;border-bottom:1px solid #e2e8f0\">${r[0]}</td><td style=\"padding:10px;border-bottom:1px solid #e2e8f0\">${r[1]}</td></tr>`).join(\"\");\nconst html = `<div style=\"font-family:Arial,sans-serif;max-width:600px;margin:0 auto\"><h1 style=\"color:#0891b2\">Reporte Semanal — ${d.clientName}</h1><p style=\"color:#64748b\">Semana del ${d.reportDate}</p><table style=\"width:100%;border-collapse:collapse;margin:20px 0\"><tr style=\"background:#f1f5f9\"><td style=\"padding:12px;font-weight:bold\">Metrica</td><td style=\"padding:12px;font-weight:bold\">Valor</td></tr>${rows}</table><p style=\"color:#64748b;font-size:12px\">Generado por ai50m.com para ${d.clientName}</p></div>`;\nreturn [{ json: { ...d, reportHtml: html } }];"
+        "jsCode": "const leads = $('Get New Leads').first().json.data || [];\nconst deals = $('Get Closed Deals').first().json.data || [];\nconst qualified = leads.filter(l => ['Hot Lead','Qualified'].includes(l.Lead_Status)).length;\nconst revenue = deals.reduce((s, d) => s + (parseFloat(d.Amount) || 0), 0);\nconst conversion_rate = leads.length > 0 ? ((qualified / leads.length) * 100).toFixed(1) : 0;\nconst now = new Date();\nconst weekAgo = new Date(now - 7*24*60*60*1000);\nreturn [{ json: {\n  new_leads: leads.length,\n  qualified_leads: qualified,\n  deals_closed: deals.length,\n  revenue,\n  conversion_rate: parseFloat(conversion_rate),\n  week_start: weekAgo.toISOString().split('T')[0],\n  week_end: now.toISOString().split('T')[0]\n} }];"
       }
     },
     {
-      "id": "email-1",
-      "name": "Send Report Email",
-      "type": "n8n-nodes-base.emailSend",
-      "typeVersion": 2,
+      "id": "claude-rp",
+      "name": "Claude Narrative",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
-        1160,
+        900,
         300
       ],
       "parameters": {
-        "fromEmail": "reports@ai50m.com",
-        "toEmail": "${CLIENT_EMAIL}",
-        "subject": "Reporte Semanal — ${CLIENT_NAME} — {{ $json.reportDate }}",
-        "emailType": "html",
-        "message": "={{ $json.reportHtml }}",
-        "options": {}
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "headers": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{$credentials.anthropicApiKey}}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={\"model\":\"claude-haiku-4-5\",\"max_tokens\":400,\"system\":\"You are a business analyst. Write a 3-sentence executive summary of weekly metrics. Be positive and actionable.\",\"messages\":[{\"role\":\"user\",\"content\":\"Weekly metrics for ${CLIENT_NAME}:\\n- New leads: \" + $json.new_leads + \"\\n- Qualified leads: \" + $json.qualified_leads + \"\\n- Deals closed: \" + $json.deals_closed + \"\\n- Revenue: $\" + $json.revenue + \"\\n- Conversion rate: \" + $json.conversion_rate + \"%\\n\\nWrite a brief executive summary.\"}]}"
+      }
+    },
+    {
+      "id": "build-rp",
+      "name": "Build Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const metrics = $('Calculate Metrics').first().json;\nconst narrative = $input.first().json.content?.[0]?.text || 'Report generated.';\nconst CLIENT = '${CLIENT_NAME}';\nconst report = `# Weekly Report — ${CLIENT}\\n## Period: ${metrics.week_start} -> ${metrics.week_end}\\n\\n### Key Metrics\\n| Metric | Value |\\n|--------|-------|\\n| New Leads | ${metrics.new_leads} |\\n| Qualified | ${metrics.qualified_leads} |\\n| Deals Closed | ${metrics.deals_closed} |\\n| Revenue | $${metrics.revenue?.toFixed(2)} |\\n| Conversion | ${metrics.conversion_rate}% |\\n\\n### Executive Summary\\n${narrative}`;\nreturn [{ json: { report, metrics, narrative } }];"
+      }
+    },
+    {
+      "id": "send-rp",
+      "name": "Send Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1300,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://ntfy.sh/${CLIENT_ID}-reports",
+        "sendBody": true,
+        "contentType": "raw",
+        "body": "={{$json.report}}"
+      }
+    },
+    {
+      "id": "output-rp",
+      "name": "Report Output",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1500,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "report_date",
+              "value": "={{new Date().toISOString().split('T')[0]}}",
+              "type": "string"
+            },
+            {
+              "id": "2",
+              "name": "metrics",
+              "value": "={{$('Calculate Metrics').first().json}}",
+              "type": "object"
+            },
+            {
+              "id": "3",
+              "name": "summary",
+              "value": "={{$('Build Report').first().json.narrative}}",
+              "type": "string"
+            }
+          ]
+        }
       }
     }
   ],
   "connections": {
-    "Weekly Report Schedule": {
+    "Monday 8am UTC": {
       "main": [
         [
           {
-            "node": "Fetch CRM Data",
+            "node": "Get New Leads",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Closed Deals",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Fetch CRM Data": {
+    "Get New Leads": {
       "main": [
         [
           {
-            "node": "Aggregate Data",
+            "node": "Calculate Metrics",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Aggregate Data": {
+    "Get Closed Deals": {
       "main": [
         [
           {
-            "node": "Generate Report HTML",
+            "node": "Calculate Metrics",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Generate Report HTML": {
+    "Calculate Metrics": {
       "main": [
         [
           {
-            "node": "Send Report Email",
+            "node": "Claude Narrative",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Narrative": {
+      "main": [
+        [
+          {
+            "node": "Build Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Report": {
+      "main": [
+        [
+          {
+            "node": "Send Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Report": {
+      "main": [
+        [
+          {
+            "node": "Report Output",
             "type": "main",
             "index": 0
           }
@@ -139,5 +262,6 @@
   },
   "settings": {
     "executionOrder": "v1"
-  }
+  },
+  "staticData": null
 }
