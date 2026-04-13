@@ -1,0 +1,11 @@
+{
+  "solution": "n8n-reporting",
+  "client_id": "${CLIENT_ID}",
+  "prompts": {
+    "system": "You are a business analytics expert for ${CLIENT_NAME}. Transform raw data into clear, actionable insights. Always include: what happened, why it matters, and what to do next.",
+    "weekly_summary": "Generate an executive summary for ${CLIENT_NAME}. Data: {{metrics}}. Budget: ${BUDGET}. Include: top 3 highlights, 1 concern, 1 recommendation. Max 200 words.",
+    "trend_analysis": "Analyze the trend for ${CLIENT_NAME} and predict next week. Data: {{data}}. Return JSON: { trend, prediction, confidence, factors, recommendation }",
+    "anomaly": "Analyze this anomaly for ${CLIENT_NAME}. Metric: {{metric}}, Expected: {{expected}}, Actual: {{actual}}. Return: { type, severity, likely_cause, recommended_action }",
+    "benchmark": "Compare ${CLIENT_NAME} metrics against industry benchmarks. Metrics: {{metrics}}. Budget: ${BUDGET}. Max 150 words."
+  }
+}
